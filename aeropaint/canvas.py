@@ -1,4 +1,4 @@
-"""Холст: хранение изображения, отмена действий, сохранение и загрузка."""
+"""Холст: изображение в памяти, отмена/повтор, сохранение, автосохранение."""
 
 from __future__ import annotations
 
@@ -16,29 +16,22 @@ from .config import CanvasConfig
 class Canvas:
     def __init__(self, cfg: CanvasConfig | None = None) -> None:
         self.cfg = cfg or CanvasConfig()
-        self.width = self.cfg.width
-        self.height = self.cfg.height
-        self.pixels = np.zeros((self.height, self.width, 3), dtype=np.float32)
-        self.wet = np.zeros((self.height, self.width), dtype=np.float32)
+        self.width, self.height = self.cfg.width, self.cfg.height
+        self.pixels = np.zeros((self.height, self.width, 3), dtype=np.float32)  # RGB 0..1
         self._undo: list = []
         self._redo: list = []
         self._last_autosave = time.time()
         self.clear()
 
-    # -- содержимое -----------------------------------------------------------
-
     def clear(self) -> None:
         self.pixels[:] = np.asarray(self.cfg.background, dtype=np.float32)
-        self.wet[:] = 0.0
         self._undo.clear()
         self._redo.clear()
 
     def to_uint8(self) -> np.ndarray:
         return (np.clip(self.pixels, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
-    # -- отмена и повтор ------------------------------------------------------
-    # Снимки сжимаются: пустой холст занимает единицы килобайт,
-    # поэтому двадцать с лишним шагов истории помещаются в память.
+    # -- отмена и повтор: снимки хранятся сжатыми -----------------------------
 
     def _snapshot(self) -> bytes:
         return zlib.compress(self.to_uint8().tobytes(), 1)
@@ -48,10 +41,9 @@ class Canvas:
         self.pixels[:] = raw.reshape(self.height, self.width, 3).astype(np.float32) / 255.0
 
     def begin_stroke(self) -> None:
-        """Запомнить состояние перед нанесением - одна операция отмены."""
+        """Запомнить состояние перед новым мазком - один шаг отмены."""
         self._undo.append(self._snapshot())
-        if len(self._undo) > self.cfg.undo_depth:
-            self._undo.pop(0)
+        del self._undo[:-self.cfg.undo_depth]
         self._redo.clear()
 
     @property
@@ -63,19 +55,16 @@ class Canvas:
         return bool(self._redo)
 
     def undo(self) -> bool:
-        if not self._undo:
-            return False
-        self._redo.append(self._snapshot())
-        self._restore(self._undo.pop())
-        self.wet[:] = 0.0
-        return True
+        return self._step(self._undo, self._redo)
 
     def redo(self) -> bool:
-        if not self._redo:
+        return self._step(self._redo, self._undo)
+
+    def _step(self, source: list, target: list) -> bool:
+        if not source:
             return False
-        self._undo.append(self._snapshot())
-        self._restore(self._redo.pop())
-        self.wet[:] = 0.0
+        target.append(self._snapshot())
+        self._restore(source.pop())
         return True
 
     # -- файлы ----------------------------------------------------------------
@@ -84,30 +73,22 @@ class Canvas:
         from PIL import Image
 
         img = Image.fromarray(self.to_uint8(), mode="RGB")
-        ext = os.path.splitext(path)[1].lower()
-        if ext in (".jpg", ".jpeg"):
+        if path.lower().endswith((".jpg", ".jpeg")):
             img.save(path, quality=quality, subsampling=0)
         else:
             img.save(path)
         return path
 
     def save_project(self, path: str, meta: dict | None = None) -> str:
-        """Формат проекта: сжатый растр плюс заголовок с параметрами сеанса."""
-        header = {
-            "format": "aeropaint-project",
-            "version": 1,
-            "width": self.width,
-            "height": self.height,
-            "saved_at": datetime.now().isoformat(timespec="seconds"),
-            "meta": meta or {},
-        }
-        blob = zlib.compress(self.to_uint8().tobytes(), 6)
+        """Файл проекта: 'AEPT', длина заголовка, заголовок JSON, сжатый растр."""
+        header = {"format": "aeropaint-project", "version": 1,
+                  "width": self.width, "height": self.height,
+                  "saved_at": datetime.now().isoformat(timespec="seconds"),
+                  "meta": meta or {}}
         head = json.dumps(header, ensure_ascii=False).encode("utf-8")
         with open(path, "wb") as fh:
-            fh.write(b"AEPT")
-            fh.write(len(head).to_bytes(4, "little"))
-            fh.write(head)
-            fh.write(blob)
+            fh.write(b"AEPT" + len(head).to_bytes(4, "little") + head)
+            fh.write(zlib.compress(self.to_uint8().tobytes(), 6))
         return path
 
     @classmethod
@@ -118,22 +99,19 @@ class Canvas:
             head_len = int.from_bytes(fh.read(4), "little")
             header = json.loads(fh.read(head_len).decode("utf-8"))
             raw = np.frombuffer(zlib.decompress(fh.read()), dtype=np.uint8)
-
         cfg = CanvasConfig(width=header["width"], height=header["height"])
         canvas = cls(cfg)
         canvas.pixels[:] = raw.reshape(cfg.height, cfg.width, 3).astype(np.float32) / 255.0
         return canvas
 
-    # -- автосохранение -------------------------------------------------------
-
     def maybe_autosave(self, directory: str) -> str | None:
+        """Раз в autosave_interval секунд пишет output/autosave.aept."""
         now = time.time()
         if now - self._last_autosave < self.cfg.autosave_interval:
             return None
         self._last_autosave = now
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, "autosave.aept")
-        tmp = path + ".tmp"
-        self.save_project(tmp, {"autosave": True})
-        os.replace(tmp, path)
+        self.save_project(path + ".tmp", {"autosave": True})
+        os.replace(path + ".tmp", path)
         return path

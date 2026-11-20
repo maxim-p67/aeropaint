@@ -15,7 +15,7 @@ import numpy as np
 from aeropaint.canvas import Canvas
 from aeropaint.config import CanvasConfig, ShakeConfig, SprayConfig
 from aeropaint.shake import SprayCan
-from aeropaint.spray import SprayGun, dry
+from aeropaint.spray import SprayGun
 
 
 def sweep(gun, canvas, y, color, quality, nozzle=34.0, seconds=1.6, distance=0.0):
@@ -27,10 +27,8 @@ def sweep(gun, canvas, y, color, quality, nozzle=34.0, seconds=1.6, distance=0.0
     for i in range(steps):
         t = (i + 1) / steps
         x = 90.0 + (w - 180.0) * t
-        gun.paint(canvas.pixels, canvas.wet, (x_prev, y), (x, y),
+        gun.paint(canvas.pixels, (x_prev, y), (x, y),
                   nozzle, distance, color, 1.0, quality, dt)
-        gun.update_drips(canvas.pixels, canvas.wet, dt)
-        dry(canvas.wet, dt)
         x_prev = x
 
 
@@ -63,22 +61,6 @@ def main():
     canvas2.export_image(os.path.join(out_dir, "02_distance.png"))
     print("02_distance.png    - сверху вниз: удаление -0.5, 0.0, 0.7, 1.4")
 
-    # 3. Подтёки: долгое распыление в одну точку.
-    canvas3 = Canvas(CanvasConfig(width=760, height=560))
-    gun3 = SprayGun(SprayConfig(), seed=11)
-    dt = 1.0 / 60.0
-    for i in range(190):
-        x = 250.0 + 40.0 * math.sin(i * 0.05)
-        gun3.paint(canvas3.pixels, canvas3.wet, (x, 150), (x, 150),
-                   30.0, 0.0, (0.72, 0.09, 0.14), 1.0, good, dt)
-        gun3.update_drips(canvas3.pixels, canvas3.wet, dt)
-    for _ in range(260):
-        gun3.update_drips(canvas3.pixels, canvas3.wet, dt)
-        dry(canvas3.wet, dt)
-    canvas3.export_image(os.path.join(out_dir, "03_drips.png"))
-    print(f"03_drips.png       - подтёков создано: {gun3.rng and 'да'}, "
-          f"активных осталось {len(gun3.drips)}")
-
     # 4. Реалистичный сценарий: взболтали, порисовали, краска расслоилась.
     canvas4 = Canvas(CanvasConfig(width=1100, height=520))
     gun4 = SprayGun(SprayConfig(), seed=5)
@@ -98,11 +80,9 @@ def main():
         x_prev = 90.0
         for i in range(110):
             x = 90.0 + 920.0 * (i + 1) / 110.0
-            gun4.paint(canvas4.pixels, canvas4.wet, (x_prev, y), (x, y),
+            gun4.paint(canvas4.pixels, (x_prev, y), (x, y),
                        30.0, 0.0, (0.05, 0.05, 0.06), 1.0, can.quality(), dt)
             can.update_settling(dt, spraying=True)
-            gun4.update_drips(canvas4.pixels, canvas4.wet, dt)
-            dry(canvas4.wet, dt)
             x_prev = x
         print(f"    после полосы {row + 1}: mix={can.mix:.2f}")
     canvas4.export_image(os.path.join(out_dir, "04_session.png"))

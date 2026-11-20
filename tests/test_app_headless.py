@@ -125,7 +125,7 @@ def main():
             print("\nОтладочный слой и состояние")
             app.debug = True
             rows = app.debug_rows(app.backend.poll(1 / 60), (10, 10), 0.0)
-            check("в отладке есть все поля", len(rows) == 15, f"{len(rows)}")
+            check("в отладке есть все поля", len(rows) == 14, f"{len(rows)}")
             lines = app.status_lines(app.backend.poll(1 / 60))
             check("строка состояния заполнена", len(lines) >= 4)
             run_frames(app, 3)

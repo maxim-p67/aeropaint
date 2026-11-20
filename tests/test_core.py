@@ -105,9 +105,8 @@ def test_quality_curve():
     low = SprayCan(ShakeConfig(), mix=0.20).quality()
     dead = SprayCan(ShakeConfig(), mix=0.05).quality()
 
-    check("полная подача при перемешанной краске", full.density == 1.0 and full.spit_chance == 0.0)
+    check("полная подача при перемешанной краске", full.density == 1.0 and full.sputter == 0.0)
     check("плотность падает с ухудшением", full.density > mid.density > low.density)
-    check("плевки появляются", mid.spit_chance > 0.0 and low.spit_chance > mid.spit_chance)
     check("цвет бледнеет", low.saturation < full.saturation)
     check("неровная подача только внизу шкалы", mid.sputter == 0.0 and low.sputter > 0.0)
     check("баллончик засоряется", dead.clogged and not low.clogged)
@@ -293,21 +292,39 @@ def test_auto_center():
     start, _ = f.canvas_point(W, H)
     check("точка сдвинута", start > W * 0.5 + 100, f"{start:.0f}")
 
-    for _ in range(int(20.0 * 240)):
+    # Плавность: скорость не растёт, а к цели убывает, и центр не проскакивается.
+    prev = start
+    prev_step = None
+    smooth = True
+    for _ in range(int(0.5 * 240)):
         f.auto_center(1.0 / 240.0)
+        x, _ = f.canvas_point(W, H)
+        step = prev - x
+        if step < -1e-9 or (prev_step is not None and step > prev_step + 1e-6):
+            smooth = False
+        prev, prev_step = x, step
     mid, _ = f.canvas_point(W, H)
-    check("за 20 с точка подтянулась к центру", mid < start - 50,
+    check("за полсекунды точка заметно подтянулась", mid < start - 50,
           f"было {start:.0f}, стало {mid:.0f}")
+    check("шаг монотонно убывает", smooth)
     check("но не проскочила центр", mid >= W * 0.5 - 1, f"{mid:.0f}")
 
-    for _ in range(int(600.0 * 240)):
+    for _ in range(int(10.0 * 240)):
         f.auto_center(1.0 / 240.0)
     end, _ = f.canvas_point(W, H)
     check("в пределе ровно центр", abs(end - W * 0.5) < 1.0, f"{end:.0f}")
 
-    # Скорость возврата должна быть много меньше обычного ведения руки.
-    rate = f.cfg.auto_center_rate
-    check("возврат сильный", rate >= 1.0, f"{rate}")
+    # Нулевая сила возврата ничего не двигает - так возврат включается плавно.
+    g = OrientationFilter()
+    spin(g, 0.5, 1.0, clamp=(W, H))
+    before, _ = g.canvas_point(W, H)
+    g.auto_center(0.1, 0.0)
+    after, _ = g.canvas_point(W, H)
+    check("при силе 0 точка стоит", before == after)
+
+    cfg = f.cfg
+    check("задержки возврата 3 с и 10 с за окном",
+          cfg.auto_center_delay == 3.0 and cfg.auto_center_delay_offscreen == 10.0)
 
 
 def test_distance():
@@ -336,7 +353,7 @@ def test_spray_rendering():
     good = SprayCan(ShakeConfig(), mix=1.0).quality()
 
     before = canvas.pixels.copy()
-    gun.paint(canvas.pixels, canvas.wet, (50, 100), (250, 100), 30.0, 0.0,
+    gun.paint(canvas.pixels, (50, 100), (250, 100), 30.0, 0.0,
               (0.9, 0.1, 0.1), 1.0, good, 1.0 / 60.0)
     check("краска легла", not np.allclose(before, canvas.pixels))
     check("след красный", float(canvas.pixels[100, 150, 0]) > float(canvas.pixels[100, 150, 2]))
@@ -349,18 +366,18 @@ def test_spray_rendering():
     g2 = SprayGun(SprayConfig(), seed=7)
     bad = SprayCan(ShakeConfig(), mix=0.18).quality()
     for _ in range(12):
-        g1.paint(c1.pixels, c1.wet, (60, 100), (140, 100), 25.0, 0.0,
+        g1.paint(c1.pixels, (60, 100), (140, 100), 25.0, 0.0,
                  (0.0, 0.0, 0.0), 1.0, good, 1.0 / 60.0)
-        g2.paint(c2.pixels, c2.wet, (60, 100), (140, 100), 25.0, 0.0,
+        g2.paint(c2.pixels, (60, 100), (140, 100), 25.0, 0.0,
                  (0.0, 0.0, 0.0), 1.0, bad, 1.0 / 60.0)
     check("недомешанная краска кроет хуже",
           float(c2.pixels[100, 100].mean()) > float(c1.pixels[100, 100].mean()),
           f"good={c1.pixels[100,100].mean():.3f} bad={c2.pixels[100,100].mean():.3f}")
 
     # Отпечаток у края не должен падать.
-    gun.paint(canvas.pixels, canvas.wet, (-40, -40), (5, 5), 30.0, 0.0,
+    gun.paint(canvas.pixels, (-40, -40), (5, 5), 30.0, 0.0,
               (0, 0, 0), 1.0, good, 1.0 / 60.0)
-    gun.paint(canvas.pixels, canvas.wet, (295, 195), (340, 240), 30.0, 0.0,
+    gun.paint(canvas.pixels, (295, 195), (340, 240), 30.0, 0.0,
               (0, 0, 0), 1.0, good, 1.0 / 60.0)
     check("края холста обрабатываются", np.isfinite(canvas.pixels).all())
 
@@ -373,7 +390,7 @@ def test_canvas_io():
 
     check("сначала отменять нечего", not canvas.can_undo)
     canvas.begin_stroke()
-    gun.paint(canvas.pixels, canvas.wet, (20, 40), (100, 40), 15.0, 0.0,
+    gun.paint(canvas.pixels, (20, 40), (100, 40), 15.0, 0.0,
               (0, 0, 0), 1.0, good, 1.0 / 60.0)
     painted = canvas.pixels.copy()
     check("отмена доступна", canvas.can_undo)

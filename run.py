@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Запуск AeroPaint.
 
-Примеры:
-    python run.py                     автоподбор источника ввода
-    python run.py --backend mouse     принудительно мышь
-    python run.py --backend sdl       принудительно датчики через SDL
-    python run.py --size 1920x1080    размер холста
+    py run.py                      геймпад, а если его нет - мышь
+    py run.py --backend mouse      принудительно мышь
+    py run.py --size 1920x1080     размер холста
 """
 
 import argparse
@@ -14,16 +12,12 @@ import sys
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="AeroPaint")
-    parser.add_argument("--backend", choices=("sdl", "hid", "axes", "mouse"),
-                        help="источник данных о движении")
+    parser.add_argument("--backend", choices=("sdl", "mouse"), help="источник данных о движении")
     parser.add_argument("--size", help="размер холста, например 1600x900")
-    parser.add_argument("--debug", action="store_true",
-                        help="сразу показать отладочный слой")
-    parser.add_argument("--sensitivity", type=float,
-                        help="пикселей холста на радиан поворота")
+    parser.add_argument("--debug", action="store_true", help="сразу показать отладочный слой")
+    parser.add_argument("--sensitivity", type=float, help="пикселей холста на радиан поворота")
     parser.add_argument("--grip", type=int, choices=(0, 90, 180, 270),
-                        help="поворот хвата в градусах: 0 - обычный, "
-                             "90 - как баллончик (по умолчанию)")
+                        help="поворот хвата: 0 - обычный, 90 - как баллончик (по умолчанию)")
     args = parser.parse_args()
 
     try:
